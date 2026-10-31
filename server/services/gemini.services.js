@@ -1,6 +1,5 @@
-
-const Gemini_URL = 
-"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
+const GEMINI_MODEL = "gemini-3.8-flash"
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`
 
 export const generateGeminiResponse = async (prompt) => {
     try {
@@ -8,7 +7,7 @@ export const generateGeminiResponse = async (prompt) => {
             throw new Error("GEMINI_API_KEY must be configured")
         }
 
-        const response = await fetch(Gemini_URL, {
+        const response = await fetch(GEMINI_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -16,18 +15,41 @@ export const generateGeminiResponse = async (prompt) => {
             },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { responseMimeType: "application/json" }
+                generationConfig: {
+                    responseMimeType: "application/json"
+                }
             })
         })
 
-        if (!response.ok) {
-            throw new Error(`Gemini API returned HTTP ${response.status}`)
+        const responseText = await response.text()
+        let data
+        try {
+            data = responseText ? JSON.parse(responseText) : {}
+        } catch {
+            data = { rawResponse: responseText.slice(0, 1000) }
         }
 
-        const data = await response.json()
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text
-        if (!text) throw new Error("Gemini returned no generated content")
-        return JSON.parse(text)
+        if (!response.ok) {
+            const apiMessage = data.error?.message || data.rawResponse || "No error details returned"
+            const apiStatus = data.error?.status || "UNKNOWN"
+            // Google’s error response does not contain the request header/API key.
+            console.error(`Gemini API error: HTTP ${response.status} (${apiStatus}) - ${apiMessage}`)
+            throw new Error(`Gemini API returned HTTP ${response.status}: ${apiMessage}`)
+        }
+
+        const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text
+        if (!generatedText) {
+            const blockReason = data.promptFeedback?.blockReason
+            throw new Error(blockReason
+                ? `Gemini returned no content (block reason: ${blockReason})`
+                : "Gemini returned no generated content")
+        }
+
+        try {
+            return JSON.parse(generatedText)
+        } catch {
+            throw new Error("Gemini returned invalid JSON")
+        }
     } catch (error) {
         console.error("Gemini generation failed:", error.message)
         throw new Error("Gemini generation failed", { cause: error })
